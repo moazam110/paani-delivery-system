@@ -1,7 +1,7 @@
 import type {Config} from 'tailwindcss';
 
 export default {
-  darkMode: false, // Enforcing light theme only
+  darkMode: 'media', // Using media queries for dark mode
   content: [
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',
@@ -11,7 +11,7 @@ export default {
     extend: {
       fontFamily: {
         body: ['Roboto', 'sans-serif'],
-        headline: ['Roboto', 'sans-serif'], // Changed from Poppins to Roboto for consistency
+        headline: ['Noto Serif Sindhi', 'serif'],
         sindhi: ['Noto Serif Sindhi', 'sans-serif'],
         code: ['monospace'],
       },

@@ -1,47 +1,52 @@
-
 export interface AdminUser {
-  adminId: string; // Firebase Auth UID
+  adminId: string;
   email: string;
-  verified: boolean; // True if the admin has been approved
-  role?: 'superadmin' | 'admin'; // Role of the admin
-  createdAt: any; // Firestore Timestamp
+  verified: boolean;
+  role?: 'superadmin' | 'admin';
+  createdAt: Date;
 }
 
 export interface Customer {
-  customerId: string; // Auto-generated Firestore document ID
+  customerId: string;
   name: string;
   phone?: string;
   address: string;
-  profilePictureUrl?: string; // URL to the profile picture in Firebase Storage (optional)
+  profilePictureUrl?: string;
   defaultCans: number;
   notes?: string;
-  createdAt: any; // Firestore Server Timestamp
-  updatedAt: any; // Firestore Server Timestamp
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface DeliveryRequest {
-  requestId: string; // Firestore document ID
-  customerId: string; // Link to Customer document
-  customerName: string; // Denormalized for easier display
-  address: string; // Denormalized for easier display
+  requestId: string;
+  customerId: string;
+  customerName: string;
+  address: string;
   cans: number;
-  orderDetails?: string; // e.g., specific water types, special instructions from customer
+  orderDetails?: string;
   priority: 'normal' | 'emergency';
   status: 'pending' | 'pending_confirmation' | 'delivered' | 'cancelled'; 
-  requestedAt: any; // Firestore Timestamp - When the request was logged into the system
-  scheduledFor?: any; // Firestore Timestamp - Optional: When the delivery is specifically scheduled by admin
-  deliveredAt?: any; // Firestore Timestamp - Optional: When the delivery was completed
-  completedAt?: any; // Firestore Timestamp for staff app or general completion tracking
-  createdBy?: string; // UID of admin/staff who created or 'customer_portal' etc.
-  internalNotes?: string; // Optional: Internal notes for admin/staff about this request - kept for schema flexibility
+  requestedAt: Date;
+  scheduledFor?: Date;
+  deliveredAt?: Date;
+  completedAt?: Date;
+  createdBy?: string;
+  internalNotes?: string;
 }
 
 export interface AdminNotification {
-  notificationId: string; // Firestore document ID
-  type: 'requestCancelled' | 'newCustomer' | 'requestCreated' | 'generic'; // Extend as needed
+  notificationId: string;
+  type: 'requestCancelled' | 'newCustomer' | 'requestCreated' | 'generic';
   message: string;
-  relatedDocId?: string; // e.g., cancelled requestId or new customerId
-  timestamp: any; // Firestore Server Timestamp
+  relatedDocId?: string;
+  timestamp: Date;
   isRead: boolean;
-  triggeredBy?: string; // UID of admin who performed action, or system
+  triggeredBy?: string;
+}
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  role: 'admin' | 'staff';
 }
