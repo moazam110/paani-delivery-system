@@ -11,17 +11,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from 'lucide-react';
-import { db, storage } from '@/lib/firebase'; 
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import type { Customer } from '@/types'; 
 
 const addCustomerSchema = z.object({
   name: z.string().min(1, { message: "Customer name is required." }),
   phone: z.string().optional(),
   address: z.string().min(1, { message: "Address is required." }),
-  profilePicture: z.any().optional(), // Changed from z.instanceof(FileList)
   defaultCans: z.coerce.number().min(0, { message: "Default cans cannot be negative." }).default(1),
+  pricePerCan: z.coerce.number().min(1, { message: "Price per can is required and must be greater than 0." }).max(999, { message: "Price cannot exceed 999." }),
   notes: z.string().optional(),
 });
 
@@ -42,8 +39,8 @@ export default function AddCustomerForm({ onSuccess }: AddCustomerFormProps) {
       name: "",
       phone: "",
       address: "",
-      profilePicture: undefined,
       defaultCans: 1,
+      pricePerCan: 1, // Set to minimum allowed value
       notes: "",
     },
   });
@@ -68,30 +65,51 @@ export default function AddCustomerForm({ onSuccess }: AddCustomerFormProps) {
 
   const onSubmit = async (data: AddCustomerFormValues) => {
     setIsSubmitting(true);
-    let profilePictureUrl = "";
 
     try {
-      // data.profilePicture will be a FileList if a file was selected
-      if (data.profilePicture && data.profilePicture.length > 0) {
-        const file = data.profilePicture[0]; // Access the first file
-        const storageRef = ref(storage, `customer_profile_pictures/${Date.now()}_${file.name}`);
-        const snapshot = await uploadBytes(storageRef, file);
-        profilePictureUrl = await getDownloadURL(snapshot.ref);
-      }
-
-      const customerData: Omit<Customer, 'customerId'> = {
-        name: data.name,
-        phone: data.phone || "",
-        address: data.address,
-        profilePictureUrl: profilePictureUrl,
-        defaultCans: data.defaultCans,
-        notes: data.notes || "",
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      const customerData = {
+        name: data.name.trim(),
+        phone: data.phone?.trim() || "",
+        address: data.address.trim(),
+        defaultCans: Number(data.defaultCans) || 1,
+        pricePerCan: Number(data.pricePerCan), // Remove the || 0 fallback
+        notes: data.notes?.trim() || "",
       };
 
-      await addDoc(collection(db, "customers"), customerData);
-      form.reset();
+      console.log('Submitting customer data:', customerData);
+
+      const response = await fetch('http://localhost:4000/api/customers', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(customerData),
+      });
+
+      const result = await response.json();
+      console.log('Backend response status:', response.status);
+      console.log('Backend response:', result);
+
+      if (!response.ok) {
+        throw new Error(result.error || result.details || `HTTP error! status: ${response.status}`);
+      }
+
+      // Reset form and trigger success callback
+              form.reset({
+          name: "",
+          phone: "",
+          address: "",
+          defaultCans: 1,
+          pricePerCan: 1, // Set to minimum allowed value
+          notes: "",
+        });
+
+      toast({
+        title: "Customer Added",
+        description: `Customer "${result.name}" added successfully.`,
+      });
+
       if (onSuccess) {
         onSuccess();
       }
@@ -100,7 +118,7 @@ export default function AddCustomerForm({ onSuccess }: AddCustomerFormProps) {
       toast({
         variant: "destructive",
         title: "Failed to Add Customer",
-        description: error.message || "An unexpected error occurred while saving to Firebase.",
+        description: error.message || "An unexpected error occurred while saving.",
       });
     } finally {
       setIsSubmitting(false);
@@ -120,7 +138,7 @@ export default function AddCustomerForm({ onSuccess }: AddCustomerFormProps) {
                 <FormControl>
                   <Input
                     id="customerName"
-                    placeholder="e.g., محمد علي or John Doe"
+                    placeholder="e.g., سهيل احمد عباسي or Suhail Ahmed Abbasi"
                     {...field}
                     onChange={(e) => {
                         field.onChange(e);
@@ -145,7 +163,7 @@ export default function AddCustomerForm({ onSuccess }: AddCustomerFormProps) {
             <FormItem>
               <FormLabel>Phone Number (Optional)</FormLabel>
               <FormControl>
-                <Input type="tel" placeholder="e.g., +923001234567" {...field} />
+                <Input type="tel" placeholder="+923337860444" {...field} />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -168,18 +186,12 @@ export default function AddCustomerForm({ onSuccess }: AddCustomerFormProps) {
         
         <FormField
           control={form.control}
-          name="profilePicture"
-          render={({ field }) => ( 
+          name="defaultCans"
+          render={({ field }) => (
             <FormItem>
-              <FormLabel>Profile Picture (Optional)</FormLabel>
+              <FormLabel>Default Number of Cans</FormLabel>
               <FormControl>
-                <Input 
-                  type="file" 
-                  accept="image/*" 
-                  // react-hook-form expects the FileList or File object directly
-                  // So we pass e.target.files (which is a FileList) to field.onChange
-                  onChange={(e) => field.onChange(e.target.files)}
-                />
+                <Input type="number" min="0" {...field} />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -188,12 +200,25 @@ export default function AddCustomerForm({ onSuccess }: AddCustomerFormProps) {
 
         <FormField
           control={form.control}
-          name="defaultCans"
+          name="pricePerCan"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Default Number of Cans</FormLabel>
+              <FormLabel>Price per Can (Rs.) *</FormLabel>
               <FormControl>
-                <Input type="number" min="0" {...field} />
+                <Input 
+                  type="number" 
+                  placeholder="Enter price (1-999)" 
+                  min="1"
+                  max="999"
+                  step="1"
+                  {...field}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (value === '' || (Number(value) > 0 && Number(value) <= 999 && value.length <= 3)) {
+                      field.onChange(value);
+                    }
+                  }}
+                />
               </FormControl>
               <FormMessage />
             </FormItem>

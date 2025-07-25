@@ -3,8 +3,8 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
 import type { Customer, DeliveryRequest } from '@/types';
-import { db } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot, Timestamp, doc, updateDoc, serverTimestamp, addDoc } from 'firebase/firestore';
+// REMOVE: import { db } from '@/lib/firebase';
+// REMOVE: import { collection, query, orderBy, onSnapshot, Timestamp, doc, updateDoc, serverTimestamp, addDoc } from 'firebase/firestore';
 import {
   Table,
   TableBody,
@@ -37,91 +37,45 @@ import {
 interface DeliveryRequestListProps {
   onInitiateNewRequest: (customer: Customer) => void;
   onEditRequest: (request: DeliveryRequest) => void;
+  deliveryRequests: DeliveryRequest[];
+  setDeliveryRequests: React.Dispatch<React.SetStateAction<DeliveryRequest[]>>;
 }
 
-const DeliveryRequestList: React.FC<DeliveryRequestListProps> = ({ onInitiateNewRequest, onEditRequest }) => {
-  const [allRequests, setAllRequests] = useState<DeliveryRequest[]>([]);
+const DeliveryRequestList: React.FC<DeliveryRequestListProps> = ({ onInitiateNewRequest, onEditRequest, deliveryRequests, setDeliveryRequests }) => {
   const [allCustomers, setAllCustomers] = useState<Customer[]>([]);
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [isLoadingRequests, setIsLoadingRequests] = useState(true);
   const [isLoadingCustomers, setIsLoadingCustomers] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
 
 
   useEffect(() => {
-    setIsLoadingRequests(true);
-    const requestsCollectionRef = collection(db, 'deliveryRequests');
-    // Order by status (pending first), then priority (emergency first), then by most recent request
-    const q_requests = query(
-      requestsCollectionRef,
-      orderBy('status', 'asc'), 
-      orderBy('priority', 'desc'),
-      orderBy('requestedAt', 'desc') 
-    );
-
-    const unsubscribeRequests = onSnapshot(q_requests, (querySnapshot) => {
-      const requestsData: DeliveryRequest[] = [];
-      querySnapshot.forEach((docSnapshot) => {
-        const data = docSnapshot.data();
-        // Keep cancelled requests in the list for sorting and display
-        requestsData.push({
-          requestId: docSnapshot.id,
-          ...data,
-          requestedAt: data.requestedAt instanceof Timestamp ? data.requestedAt.toDate() : new Date(data.requestedAt),
-          scheduledFor: data.scheduledFor instanceof Timestamp ? data.scheduledFor.toDate() : (data.scheduledFor ? new Date(data.scheduledFor) : undefined),
-          deliveredAt: data.deliveredAt instanceof Timestamp ? data.deliveredAt.toDate() : (data.deliveredAt ? new Date(data.deliveredAt) : undefined),
-          completedAt: data.completedAt instanceof Timestamp ? data.completedAt.toDate() : (data.completedAt ? new Date(data.completedAt) : undefined),
-        } as DeliveryRequest);
-      });
-      setAllRequests(requestsData);
-      setIsLoadingRequests(false);
-      setError(null);
-    }, (err) => {
-      console.error("Error fetching delivery requests:", err);
-      setError("Failed to fetch delivery requests. Please check console for details.");
-      setIsLoadingRequests(false);
-    });
-
     setIsLoadingCustomers(true);
-    const customersCollectionRef = collection(db, 'customers');
-    const q_customers = query(customersCollectionRef, orderBy('name', 'asc'));
-    const unsubscribeCustomers = onSnapshot(q_customers, (querySnapshot) => {
-        const customersData: Customer[] = [];
-        querySnapshot.forEach((doc) => {
-            const data = doc.data();
-            customersData.push({
-            customerId: doc.id,
-            ...data,
-            createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date(data.createdAt),
-            updatedAt: data.updatedAt instanceof Timestamp ? data.updatedAt.toDate() : new Date(data.updatedAt),
-            } as Customer);
-        });
-        setAllCustomers(customersData);
+    fetch('http://localhost:4000/api/customers')
+      .then(res => res.json())
+      .then((data) => {
+        setAllCustomers(data);
         setIsLoadingCustomers(false);
-    }, (err) => {
-        console.error("Error fetching customers:", err);
+        setError(null);
+      })
+      .catch((err) => {
+        setError('Failed to fetch customers.');
         setIsLoadingCustomers(false);
-    });
-
-
-    return () => {
-        unsubscribeRequests();
-        unsubscribeCustomers();
-    };
+      });
   }, []);
 
   const processedRequests = useMemo(() => {
     // Client-side sort to ensure 'pending' and 'pending_confirmation' are on top,
     // then 'delivered', then 'cancelled'. Within these groups, rely on Firestore's 'requestedAt' (desc)
     // and 'priority' (desc for emergencies within pending).
-    return [...allRequests].sort((a, b) => {
+    return [...deliveryRequests].sort((a, b) => {
         const statusOrderValue = (status: DeliveryRequest['status']) => {
-            if (status === 'pending_confirmation') return 0; // Emergency might make this appear above regular pending
+            if (status === 'pending_confirmation') return 0; // Urgent might make this appear above regular pending
             if (status === 'pending') return 1;
-            if (status === 'delivered') return 2;
-            if (status === 'cancelled') return 3;
-            return 4; 
+            if (status === 'processing') return 2; // Added processing status
+            if (status === 'delivered') return 3;
+            if (status === 'cancelled') return 4;
+            return 5; 
         };
 
         const orderA = statusOrderValue(a.status);
@@ -129,10 +83,10 @@ const DeliveryRequestList: React.FC<DeliveryRequestListProps> = ({ onInitiateNew
 
         if (orderA !== orderB) return orderA - orderB;
 
-        // Within the same status group, if it's an active request, prioritize emergency
-        if (a.status === 'pending' || a.status === 'pending_confirmation') {
-            if (a.priority === 'emergency' && b.priority !== 'emergency') return -1;
-            if (a.priority !== 'emergency' && b.priority === 'emergency') return 1;
+        // Within the same status group, if it's an active request, prioritize urgent
+        if (a.status === 'pending' || a.status === 'pending_confirmation' || a.status === 'processing') {
+            if (a.priority === 'urgent' && b.priority !== 'urgent') return -1;
+            if (a.priority !== 'urgent' && b.priority === 'urgent') return 1;
         }
         
         // If statuses and (for active) priorities are the same, rely on Firestore's requestedAt (desc)
@@ -141,52 +95,66 @@ const DeliveryRequestList: React.FC<DeliveryRequestListProps> = ({ onInitiateNew
         const timeB = new Date(b.requestedAt).getTime();
         return timeB - timeA;
     });
-  }, [allRequests]);
+  }, [deliveryRequests]);
 
 
   const filteredDeliveryRequests = useMemo(() => {
     if (!searchTerm) {
       return processedRequests;
     }
+    
+    // Standard search method - focus on customer name with character-by-character matching
     return processedRequests.filter(request => {
-      const term = searchTerm.toLowerCase();
-      // Change 'planned' to 'pending' for search matching as well
+      const searchLower = searchTerm.toLowerCase().trim();
+      const customerNameLower = request.customerName.toLowerCase();
+      
+      // Primary search: customer name (same standard as other components)
+      const matchesCustomerName = customerNameLower.includes(searchLower);
+      
+      // Secondary searches: address, status, priority (for admin convenience)
+      const matchesAddress = request.address.toLowerCase().includes(searchLower);
       const statusDisplay = request.status === 'pending' ? 'pending' : request.status;
-      return (
-        request.customerName.toLowerCase().includes(term) ||
-        request.address.toLowerCase().includes(term) ||
-        statusDisplay.toLowerCase().includes(term) ||
-        request.priority.toLowerCase().includes(term) ||
-        (request.orderDetails && request.orderDetails.toLowerCase().includes(term))
-      );
+      const matchesStatus = statusDisplay.toLowerCase().includes(searchLower);
+      const matchesPriority = request.priority.toLowerCase().includes(searchLower);
+      
+      // Standard search prioritizes customer name, but includes other fields for admin use
+      return matchesCustomerName || matchesAddress || matchesStatus || matchesPriority;
     });
   }, [processedRequests, searchTerm]);
 
   const customersForNewRequest = useMemo(() => {
     if (!searchTerm.trim()) return [];
 
-    const lowerSearchTerm = searchTerm.toLowerCase();
+    const searchLower = searchTerm.toLowerCase().trim();
+    // Include processing status in active requests check
     const customersWithActiveRequests = new Set(
-      allRequests
-        .filter(req => req.status === 'pending' || req.status === 'pending_confirmation')
+      deliveryRequests
+        .filter(req => ['pending', 'pending_confirmation', 'processing'].includes(req.status))
         .map(req => req.customerId)
     );
 
     return allCustomers
-      .filter(customer =>
-        (customer.name.toLowerCase().includes(lowerSearchTerm) ||
-         (customer.phone && customer.phone.includes(lowerSearchTerm)) ||
-         customer.address.toLowerCase().includes(lowerSearchTerm)
-        ) && !customersWithActiveRequests.has(customer.customerId)
-      )
-      .slice(0, 5); 
-  }, [allCustomers, allRequests, searchTerm]);
+      .filter(customer => {
+        // Standard search: exact same method as CreateDeliveryRequestForm
+        const nameLower = customer.name.toLowerCase();
+        const matchesSearch = nameLower.includes(searchLower) ||
+                             (customer.phone && customer.phone.includes(searchTerm)) ||
+                             customer.address.toLowerCase().includes(searchLower);
+        
+        // Only show customers without active requests
+        const hasNoActiveRequest = !customersWithActiveRequests.has(customer._id || customer.customerId || '');
+        
+        return matchesSearch && hasNoActiveRequest;
+      })
+      .slice(0, 8); // Show more results for better UX
+  }, [allCustomers, deliveryRequests, searchTerm]);
 
 
   const getStatusBadgeVariant = (status: DeliveryRequest['status']) => {
     switch (status) {
       case 'pending': return 'default'; 
       case 'pending_confirmation': return 'secondary';
+      case 'processing': return 'default'; // Added processing variant
       case 'delivered': return 'outline'; 
       case 'cancelled': return 'destructive';
       default: return 'default';
@@ -194,7 +162,7 @@ const DeliveryRequestList: React.FC<DeliveryRequestListProps> = ({ onInitiateNew
   };
 
    const getPriorityIcon = (priority: DeliveryRequest['priority']) => {
-    if (priority === 'emergency') {
+    if (priority === 'urgent') {
       return <AlertTriangle className="h-4 w-4 text-destructive inline-block mr-1" />;
     }
     return null;
@@ -212,7 +180,7 @@ const DeliveryRequestList: React.FC<DeliveryRequestListProps> = ({ onInitiateNew
     return null;
   }
 
-  const isLoading = isLoadingRequests || isLoadingCustomers;
+  const isLoading = false; // No longer loading mock data
 
   if (isLoading) {
     return (
@@ -254,7 +222,7 @@ const DeliveryRequestList: React.FC<DeliveryRequestListProps> = ({ onInitiateNew
               <h4 className="text-lg font-semibold mb-3">Create New Request for:</h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {customersForNewRequest.map(customer => (
-                  <Card key={customer.customerId} className="shadow-sm hover:shadow-md transition-shadow">
+                  <Card key={customer._id || customer.customerId || `customer-${Math.random()}`} className="shadow-sm hover:shadow-md transition-shadow">
                       <CardContent className="p-4 flex justify-between items-center">
                           <div>
                               <p className={cn("font-medium", /[ء-ي]/.test(customer.name) ? 'font-sindhi rtl' : 'ltr')}>{customer.name}</p>
@@ -299,7 +267,8 @@ const DeliveryRequestList: React.FC<DeliveryRequestListProps> = ({ onInitiateNew
                 const isDelivered = request.status === 'delivered';
                 const rowClasses = cn(
                     isCancelled ? 'opacity-60 bg-muted/30' : '',
-                    isDelivered ? 'bg-green-500/10' : ''
+                    isDelivered ? 'bg-green-500/10' : '',
+                    request.status === 'processing' ? 'bg-yellow-100' : ''
                 );
                 
                 // Requests can be edited if they are not delivered or cancelled.
@@ -308,7 +277,7 @@ const DeliveryRequestList: React.FC<DeliveryRequestListProps> = ({ onInitiateNew
                 // The form itself will handle if cancellation is possible.
 
                 return (
-                  <TableRow key={request.requestId} className={rowClasses}>
+                  <TableRow key={request._id || request.requestId || `req-${Math.random()}`} className={rowClasses}>
                     <TableCell className={cn(nameClasses, isCancelled && 'line-through')}>
                         {request.customerName}
                     </TableCell>

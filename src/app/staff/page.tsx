@@ -3,79 +3,111 @@
 
 import React, { useState, useEffect } from 'react';
 import type { DeliveryRequest } from '@/types';
-import { db } from '@/lib/firebase';
-import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, Timestamp, orderBy } from 'firebase/firestore';
 import Header from '@/components/shared/Header';
 import StaffDashboardMetrics from '@/components/dashboard/StaffDashboardMetrics';
 import RequestQueue from '@/components/requests/RequestQueue';
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 
 
 export default function StaffPage() {
   const [deliveryRequests, setDeliveryRequests] = useState<DeliveryRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isBackendConnected, setIsBackendConnected] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
-    setIsLoading(true);
-    const requestsCollectionRef = collection(db, 'deliveryRequests');
-    const q = query(
-        requestsCollectionRef, 
-        where('status', 'in', ['pending', 'pending_confirmation']),
-        orderBy('priority', 'desc'), 
-        orderBy('requestedAt', 'asc')  
-    );
-
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-        const requestsData: DeliveryRequest[] = [];
-        querySnapshot.forEach((docSnapshot) => {
-            const data = docSnapshot.data();
-            requestsData.push({
-                requestId: docSnapshot.id,
-                ...data,
-                requestedAt: data.requestedAt instanceof Timestamp ? data.requestedAt.toDate() : new Date(data.requestedAt),
-                scheduledFor: data.scheduledFor instanceof Timestamp ? data.scheduledFor.toDate() : (data.scheduledFor ? new Date(data.scheduledFor) : undefined),
-                deliveredAt: data.deliveredAt instanceof Timestamp ? data.deliveredAt.toDate() : (data.deliveredAt ? new Date(data.deliveredAt) : undefined),
-                completedAt: data.completedAt instanceof Timestamp ? data.completedAt.toDate() : (data.completedAt ? new Date(data.completedAt) : undefined),
-            } as DeliveryRequest);
+    // Check backend connection
+    const checkBackendConnection = async () => {
+      try {
+        const response = await fetch('http://localhost:4000/api/health', {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(5000)
         });
-        setDeliveryRequests(requestsData);
+        setIsBackendConnected(response.ok);
+      } catch (err) {
+        console.error('Backend connection error:', err);
+        setIsBackendConnected(false);
+      }
+    };
+
+    checkBackendConnection();
+    const interval = setInterval(checkBackendConnection, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    // Function to fetch delivery requests
+    const fetchDeliveryRequests = async () => {
+      try {
+        const res = await fetch('http://localhost:4000/api/delivery-requests');
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        const data = await res.json();
+        setDeliveryRequests(data);
         setIsLoading(false);
-    }, (error) => {
-        console.error("Error fetching staff delivery requests:", error);
+      } catch (err) {
+        console.error('Error fetching delivery requests:', err);
+        setIsLoading(false);
         toast({
-            variant: "destructive",
-            title: "Error Fetching Requests",
-            description: "Could not load delivery tasks. Please try again later.",
+          variant: "destructive",
+          title: "Connection Error",
+          description: "Unable to fetch delivery requests. Check if backend is running.",
         });
-        setIsLoading(false);
-    });
+      }
+    };
 
-    return () => unsubscribe();
+    // Initial fetch
+    setIsLoading(true);
+    fetchDeliveryRequests();
+
+    // Set up real-time updates every 3 seconds
+    const interval = setInterval(() => {
+      fetchDeliveryRequests();
+    }, 3000);
+
+    // Cleanup interval on unmount
+    return () => clearInterval(interval);
   }, [toast]);
 
   const handleMarkAsDone = async (requestId: string) => {
     try {
-        const requestDocRef = doc(db, 'deliveryRequests', requestId);
-        await updateDoc(requestDocRef, {
-            status: 'delivered',
-            deliveredAt: serverTimestamp(), 
-            completedAt: serverTimestamp() 
-        });
-        
-        const completedRequest = deliveryRequests.find(req => req.requestId === requestId);
-        if (completedRequest) {
-            // No success toast
-        }
+      const currentRequest = deliveryRequests.find(req => (req._id || req.requestId) === requestId);
+      if (!currentRequest) return;
+
+      let newStatus = 'delivered';
+      if (currentRequest.status === 'pending' || currentRequest.status === 'pending_confirmation') {
+        newStatus = 'processing';
+      } else if (currentRequest.status === 'processing') {
+        newStatus = 'delivered';
+      }
+
+      const actualRequestId = currentRequest._id || currentRequest.requestId;
+      const response = await fetch(`http://localhost:4000/api/delivery-requests/${actualRequestId}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      });
+
+      if (response.ok) {
+        const updatedRequest = await response.json();
+        setDeliveryRequests(prev => prev.map(req => 
+          (req._id || req.requestId) === requestId ? { ...req, ...updatedRequest } : req
+        ));
+      } else {
+        throw new Error('Failed to update status');
+      }
     } catch (error) {
-        console.error("Error marking request as done:", error);
-        toast({
-            variant: "destructive",
-            title: "Update Failed",
-            description: "Could not mark the request as delivered. Please try again.",
-        });
+      console.error("Error updating request status:", error);
+      toast({
+        variant: "destructive",
+        title: "Update Failed",
+        description: "Could not update the request status. Please try again.",
+      });
     }
   };
 
@@ -105,6 +137,29 @@ export default function StaffPage() {
     <div className="min-h-screen flex flex-col bg-background">
       <Header title="Staff Delivery Interface" />
       <main className="flex-grow">
+        {!isBackendConnected && (
+          <div className="mx-4 mt-4 p-4 bg-yellow-100 border border-yellow-400 text-yellow-700 rounded-md">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">⚠️ Backend server is not connected</p>
+                <p className="text-xs mt-1">
+                  Make sure the backend is running on port 4000. 
+                  <a href="http://localhost:4000/api/health" target="_blank" rel="noopener noreferrer" className="underline ml-1">
+                    Test backend health
+                  </a>
+                </p>
+              </div>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => window.location.reload()}
+                className="ml-4 text-yellow-700 border-yellow-400 hover:bg-yellow-200"
+              >
+                Retry Connection
+              </Button>
+            </div>
+          </div>
+        )}
         <StaffDashboardMetrics requests={deliveryRequests} /> 
         <RequestQueue requests={deliveryRequests} onMarkAsDone={handleMarkAsDone} />
       </main>

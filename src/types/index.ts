@@ -8,26 +8,28 @@ export interface AdminUser {
 }
 
 export interface Customer {
-  customerId: string; // Auto-generated Firestore document ID
+  _id?: string; // MongoDB ObjectId
+  customerId?: string; // For backward compatibility
   name: string;
   phone?: string;
   address: string;
-  profilePictureUrl?: string; // URL to the profile picture in Firebase Storage (optional)
   defaultCans: number;
+  pricePerCan?: number;
   notes?: string;
   createdAt: any; // Firestore Server Timestamp
   updatedAt: any; // Firestore Server Timestamp
 }
 
 export interface DeliveryRequest {
-  requestId: string; // Firestore document ID
+  _id?: string; // MongoDB ObjectId
+  requestId?: string; // For backward compatibility
   customerId: string; // Link to Customer document
   customerName: string; // Denormalized for easier display
   address: string; // Denormalized for easier display
   cans: number;
   orderDetails?: string; // e.g., specific water types, special instructions from customer
-  priority: 'normal' | 'emergency';
-  status: 'pending' | 'pending_confirmation' | 'delivered' | 'cancelled'; 
+  priority: 'normal' | 'urgent';
+  status: 'pending' | 'pending_confirmation' | 'processing' | 'delivered' | 'cancelled'; 
   requestedAt: any; // Firestore Timestamp - When the request was logged into the system
   scheduledFor?: any; // Firestore Timestamp - Optional: When the delivery is specifically scheduled by admin
   deliveredAt?: any; // Firestore Timestamp - Optional: When the delivery was completed

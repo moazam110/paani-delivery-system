@@ -10,8 +10,6 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { useToast } from "@/hooks/use-toast";
-import { auth } from '@/lib/firebase'; 
-import { signInWithEmailAndPassword } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
 
 const loginSchema = z.object({
@@ -34,7 +32,13 @@ export default function LoginForm() {
 
   const onSubmit = async (data: LoginFormValues) => {
     try {
-      await signInWithEmailAndPassword(auth, data.email, data.password);
+      // TODO: Implement actual login logic with an API endpoint
+      // For now, we'll just simulate a successful login
+      console.log("Simulating login with:", data);
+      toast({
+        title: "Login Successful",
+        description: "Simulated login successful. Redirecting to admin page.",
+      });
       router.push('/admin'); 
     } catch (error: any) {
       // Removed console.error to prevent Next.js dev overlay for handled errors

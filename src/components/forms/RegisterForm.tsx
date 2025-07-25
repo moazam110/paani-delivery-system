@@ -11,9 +11,9 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import Link from 'next/link';
 import { useToast } from "@/hooks/use-toast";
-import { auth, db } from '@/lib/firebase'; 
-import { createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+// REMOVE: import { auth, db } from '@/lib/firebase';
+// REMOVE: import { createUserWithEmailAndPassword } from 'firebase/auth';
+// REMOVE: import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 
 const registerSchema = z.object({
@@ -43,22 +43,12 @@ export default function RegisterForm() {
 
   const onSubmit = async (data: RegisterFormValues) => {
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
-      const user = userCredential.user;
-
-      const isSuperAdmin = data.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
-
-      await setDoc(doc(db, "admins", user.uid), {
-        adminId: user.uid,
-        email: user.email,
-        verified: isSuperAdmin, // Auto-verify if superadmin email
-        role: isSuperAdmin ? 'superadmin' : 'admin',
-        createdAt: serverTimestamp(),
-      });
-      
+      // TODO: Implement actual user registration logic
+      // This includes creating a user in the backend and setting up their role
+      // For now, we'll just show a success message
       toast({
         title: "Registration Successful",
-        description: isSuperAdmin ? "Your super admin account has been created and verified." : "Your admin account has been registered. Please wait for verification.",
+        description: "Your admin account has been registered. Please wait for verification.",
       });
       router.push('/admin/login'); 
     } catch (error: any) {

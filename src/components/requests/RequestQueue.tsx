@@ -3,7 +3,7 @@ import type React from 'react';
 import type { DeliveryRequest } from '@/types';
 import RequestCard from './RequestCard';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { ListFilter, ListChecks } from 'lucide-react';
+import { ListFilter, ListChecks, Clock } from 'lucide-react';
 
 interface RequestQueueProps {
   requests: DeliveryRequest[];
@@ -11,12 +11,23 @@ interface RequestQueueProps {
 }
 
 const RequestQueue: React.FC<RequestQueueProps> = ({ requests, onMarkAsDone }) => {
-  const pendingRequests = requests // Changed from plannedRequests
-    .filter(req => req.status === 'pending' || req.status === 'pending_confirmation') // Changed from 'planned'
+  const pendingRequests = requests
+    .filter(req => req.status === 'pending' || req.status === 'pending_confirmation')
     .sort((a, b) => {
-      if (a.priority === 'emergency' && b.priority !== 'emergency') return -1;
-      if (a.priority !== 'emergency' && b.priority === 'emergency') return 1;
+      if (a.priority === 'urgent' && b.priority !== 'urgent') return -1;
+      if (a.priority !== 'urgent' && b.priority === 'urgent') return 1;
       // Ensure dates are properly compared; assuming they are Date objects or numbers
+      const timeA = a.requestedAt instanceof Date ? a.requestedAt.getTime() : (typeof a.requestedAt === 'number' ? a.requestedAt : 0);
+      const timeB = b.requestedAt instanceof Date ? b.requestedAt.getTime() : (typeof b.requestedAt === 'number' ? b.requestedAt : 0);
+      return timeA - timeB; // Oldest first
+    });
+
+  const processingRequests = requests
+    .filter(req => req.status === 'processing')
+    .sort((a, b) => {
+      if (a.priority === 'urgent' && b.priority !== 'urgent') return -1;
+      if (a.priority !== 'urgent' && b.priority === 'urgent') return 1;
+      // Sort by when they started processing (requestedAt for now, could be a processingStartedAt field)
       const timeA = a.requestedAt instanceof Date ? a.requestedAt.getTime() : (typeof a.requestedAt === 'number' ? a.requestedAt : 0);
       const timeB = b.requestedAt instanceof Date ? b.requestedAt.getTime() : (typeof b.requestedAt === 'number' ? b.requestedAt : 0);
       return timeA - timeB; // Oldest first
@@ -31,10 +42,9 @@ const RequestQueue: React.FC<RequestQueueProps> = ({ requests, onMarkAsDone }) =
         return timeB - timeA; // Newest completed first
     });
 
-
   return (
     <div className="p-4 md:p-8 space-y-6">
-      <Accordion type="multiple" defaultValue={['pending-requests', 'delivered-requests']} className="w-full">
+      <Accordion type="multiple" defaultValue={['pending-requests', 'processing-requests', 'delivered-requests']} className="w-full">
         <AccordionItem value="pending-requests">
           <AccordionTrigger className="text-xl font-headline hover:no-underline">
             <div className="flex items-center">
@@ -46,11 +56,31 @@ const RequestQueue: React.FC<RequestQueueProps> = ({ requests, onMarkAsDone }) =
             {pendingRequests.length > 0 ? (
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 py-4">
                 {pendingRequests.map(request => (
-                  <RequestCard key={request.requestId} request={request} onMarkAsDone={onMarkAsDone} />
+                  <RequestCard key={request._id || request.requestId || Math.random()} request={request} onMarkAsDone={onMarkAsDone} />
                 ))}
               </div>
             ) : (
               <p className="text-center text-muted-foreground py-4">No pending delivery requests.</p>
+            )}
+          </AccordionContent>
+        </AccordionItem>
+
+        <AccordionItem value="processing-requests">
+          <AccordionTrigger className="text-xl font-headline hover:no-underline">
+            <div className="flex items-center">
+              <Clock className="h-6 w-6 mr-3 text-yellow-600" />
+              Processing Requests ({processingRequests.length})
+            </div>
+          </AccordionTrigger>
+          <AccordionContent>
+            {processingRequests.length > 0 ? (
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 py-4">
+                {processingRequests.map(request => (
+                  <RequestCard key={request._id || request.requestId || Math.random()} request={request} onMarkAsDone={onMarkAsDone} />
+                ))}
+              </div>
+            ) : (
+              <p className="text-center text-muted-foreground py-4">No requests currently being processed.</p>
             )}
           </AccordionContent>
         </AccordionItem>
@@ -66,7 +96,7 @@ const RequestQueue: React.FC<RequestQueueProps> = ({ requests, onMarkAsDone }) =
             {deliveredRequests.length > 0 ? (
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 py-4">
                 {deliveredRequests.map(request => (
-                  <RequestCard key={request.requestId} request={request} onMarkAsDone={onMarkAsDone} />
+                  <RequestCard key={request._id || request.requestId || Math.random()} request={request} onMarkAsDone={onMarkAsDone} />
                 ))}
               </div>
             ) : (

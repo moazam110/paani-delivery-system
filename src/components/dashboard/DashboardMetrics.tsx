@@ -11,8 +11,8 @@ interface DashboardMetricsProps {
 }
 
 const DashboardMetrics: React.FC<DashboardMetricsProps> = ({ requests }) => {
-  // For staff, "planned" are effectively "pending" or "to-do"
-  const pendingCount = requests.filter(req => req.status === 'planned' || req.status === 'pending_confirmation').length;
+  // For staff, "pending" are effectively "pending" or "to-do"
+  const pendingCount = requests.filter(req => req.status === 'pending' || req.status === 'pending_confirmation').length;
   
   // "Delivered" count is not directly applicable here if 'requests' only contains pending ones.
   // If you want to show overall delivered count, it would need a different data source or prop.

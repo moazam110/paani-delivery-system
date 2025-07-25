@@ -12,8 +12,6 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Search, CheckCircle, Ban } from 'lucide-react';
-import { db } from '@/lib/firebase';
-import { collection, addDoc, serverTimestamp, getDocs, query, orderBy, Timestamp, doc, updateDoc } from 'firebase/firestore';
 import type { Customer, DeliveryRequest } from '@/types';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
@@ -35,7 +33,7 @@ import {
 const createDeliveryRequestSchema = z.object({
   cans: z.coerce.number().min(1, { message: "Number of cans must be at least 1." }),
   orderDetails: z.string().optional(),
-  priority: z.enum(['normal', 'emergency'], { required_error: "Priority is required." }),
+  priority: z.enum(['normal', 'urgent'], { required_error: "Priority is required." }),
 });
 
 type CreateDeliveryRequestFormValues = z.infer<typeof createDeliveryRequestSchema>;
@@ -60,11 +58,11 @@ export default function CreateDeliveryRequestForm({
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [isLoadingCustomers, setIsLoadingCustomers] = useState(true);
   const [isCancelConfirmationOpen, setIsCancelConfirmationOpen] = useState(false);
+  const [customersWithActiveRequests, setCustomersWithActiveRequests] = useState<Set<string>>(new Set());
 
   const isEditMode = !!editingRequest;
   // A request can be cancelled if it's in 'edit mode' AND its status is 'pending' or 'pending_confirmation'
   const canCancelRequest = isEditMode && editingRequest && (editingRequest.status === 'pending' || editingRequest.status === 'pending_confirmation');
-
 
   const form = useForm<CreateDeliveryRequestFormValues>({
     resolver: zodResolver(createDeliveryRequestSchema),
@@ -75,6 +73,7 @@ export default function CreateDeliveryRequestForm({
     },
   });
 
+  // Fetch customers and their active request status
   useEffect(() => {
     if (editingRequest) {
       const customerForEdit: Customer = {
@@ -101,19 +100,37 @@ export default function CreateDeliveryRequestForm({
       });
       setIsLoadingCustomers(false);
     } else {
-      const fetchCustomers = async () => {
+      const fetchCustomersAndActiveRequests = async () => {
         setIsLoadingCustomers(true);
         try {
-          const customersCollectionRef = collection(db, 'customers');
-          const q_customers = query(customersCollectionRef, orderBy('name', 'asc'));
-          const querySnapshot = await getDocs(q_customers);
-          const customersData = querySnapshot.docs.map(doc => ({
-            customerId: doc.id,
-            ...doc.data(),
-            createdAt: doc.data().createdAt instanceof Timestamp ? doc.data().createdAt.toDate() : new Date(doc.data().createdAt),
-            updatedAt: doc.data().updatedAt instanceof Timestamp ? doc.data().updatedAt.toDate() : new Date(doc.data().updatedAt),
-          } as Customer));
+          console.log('Fetching customers for delivery request...');
+          const customersResponse = await fetch('http://localhost:4000/api/customers');
+          
+          if (!customersResponse.ok) {
+            throw new Error(`HTTP error! status: ${customersResponse.status}`);
+          }
+          
+          const customersData = await customersResponse.json();
+          console.log('Fetched customers for delivery request:', customersData);
           setAllCustomers(customersData);
+
+          // Fetch active requests to prevent duplicates
+          const requestsResponse = await fetch('http://localhost:4000/api/delivery-requests');
+          if (requestsResponse.ok) {
+            const requestsData: DeliveryRequest[] = await requestsResponse.json();
+            const activeCustomerIds = new Set<string>();
+            
+            requestsData
+              .filter(req => ['pending', 'pending_confirmation', 'processing'].includes(req.status))
+              .forEach(req => {
+                if (req.customerId) {
+                  activeCustomerIds.add(String(req.customerId));
+                }
+              });
+              
+            setCustomersWithActiveRequests(activeCustomerIds);
+            console.log('Customers with active requests:', Array.from(activeCustomerIds));
+          }
         } catch (error) {
           console.error("Error fetching customers:", error);
           toast({
@@ -121,31 +138,62 @@ export default function CreateDeliveryRequestForm({
             title: "Failed to load customers",
             description: "Could not fetch customer list for selection.",
           });
+          setAllCustomers([]);
         } finally {
           setIsLoadingCustomers(false);
         }
       };
-      fetchCustomers();
+      
+      // Initial fetch
+      fetchCustomersAndActiveRequests();
+      
+      // Set up real-time updates every 5 seconds to refresh active customers
+      const interval = setInterval(fetchCustomersAndActiveRequests, 5000);
+      
       form.reset({ cans: 1, orderDetails: "", priority: "normal" });
       setSelectedCustomer(null);
+      
+      // Cleanup interval on unmount
+      return () => clearInterval(interval);
     }
   }, [toast, form, customerToPreselect, editingRequest]);
 
-
+  // Standard search filtering - only show customers that match the search term
   const filteredCustomers = useMemo(() => {
     if (isEditMode || customerToPreselect) return []; 
     if (!searchTerm.trim()) return [];
-    return allCustomers.filter(customer =>
-      customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (customer.phone && customer.phone.includes(searchTerm)) ||
-      customer.address.toLowerCase().includes(searchTerm.toLowerCase())
-    ).slice(0, 5);
+    
+    return allCustomers
+      .filter(customer => {
+        // Standard search: match customer name with the search term (character by character)
+        const searchLower = searchTerm.toLowerCase().trim();
+        const nameLower = customer.name.toLowerCase();
+        
+        // Match if customer name starts with search term or contains the search term
+        return nameLower.includes(searchLower) ||
+               (customer.phone && customer.phone.includes(searchTerm)) ||
+               customer.address.toLowerCase().includes(searchLower);
+      })
+      .slice(0, 8); // Show more results for better UX
   }, [allCustomers, searchTerm, customerToPreselect, isEditMode]);
 
-  const handleSelectCustomer = (customer: Customer) => {
+  const handleSelectCustomer = async (customer: Customer) => {
+    // Check if customer has active requests
+    const customerId = customer._id || customer.customerId;
+    const hasActiveRequest = customersWithActiveRequests.has(customerId || '');
+    
+    if (hasActiveRequest) {
+      toast({
+        variant: "destructive",
+        title: "Active Request Exists",
+        description: `${customer.name} already has an active delivery request. Please wait until it's delivered before creating a new one.`,
+      });
+      return;
+    }
+
     setSelectedCustomer(customer);
     form.setValue("cans", customer.defaultCans || 1);
-    setSearchTerm('');
+    setSearchTerm(''); // Clear search immediately after selection
   };
 
   const onSubmit = async (data: CreateDeliveryRequestFormValues) => {
@@ -161,42 +209,61 @@ export default function CreateDeliveryRequestForm({
 
     try {
       if (isEditMode && editingRequest) {
-        const requestDocRef = doc(db, 'deliveryRequests', editingRequest.requestId);
-        await updateDoc(requestDocRef, {
-          ...data, 
-          status: 'pending', // If editing, it becomes/stays 'pending'
-          updatedAt: serverTimestamp(),
+        const response = await fetch(`http://localhost:4000/api/delivery-requests/${editingRequest._id || editingRequest.requestId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...data,
+            customerId: selectedCustomer?._id || selectedCustomer?.customerId || editingRequest.customerId,
+            customerName: selectedCustomer?.name || editingRequest.customerName,
+            address: selectedCustomer?.address || editingRequest.address,
+          }),
         });
+        
+        if (response.ok) {
+          toast({
+            title: "Request Updated",
+            description: "Delivery request updated successfully.",
+          });
+        } else {
+          throw new Error('Failed to update request');
+        }
       } else if (selectedCustomer) {
-        const deliveryRequestData: Omit<DeliveryRequest, 'requestId' | 'requestedAt' | 'status' | 'updatedAt' | 'createdAt' | 'internalNotes'> = {
-          customerId: selectedCustomer.customerId,
-          customerName: selectedCustomer.name,
-          address: selectedCustomer.address,
-          cans: data.cans,
-          orderDetails: data.orderDetails || "",
-          priority: data.priority,
-        };
-        await addDoc(collection(db, "deliveryRequests"), {
-          ...deliveryRequestData,
-          status: 'pending', // New requests are 'pending'
-          requestedAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
+        const response = await fetch('http://localhost:4000/api/delivery-requests', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...data,
+            customerId: selectedCustomer._id || selectedCustomer.customerId,
+            customerName: selectedCustomer.name,
+            address: selectedCustomer.address,
+          }),
         });
+        
+        if (response.ok) {
+          toast({
+            title: "Request Created",
+            description: "Delivery request created successfully.",
+          });
+        } else {
+          throw new Error('Failed to create request');
+        }
       }
 
-      form.reset({ cans: 1, orderDetails: "", priority: "normal" });
-      if (!customerToPreselect && !isEditMode) {
-         setSelectedCustomer(null);
-      }
-      setSearchTerm('');
+      form.reset();
+      setSelectedCustomer(null);
+      setSearchTerm(''); // Clear search after successful creation
       if (onSuccess) {
         onSuccess();
       }
+      if (onCloseDialog) {
+        onCloseDialog();
+      }
     } catch (error: any) {
-      console.error("Error saving delivery request:", error);
+      console.error("Error submitting delivery request:", error);
       toast({
         variant: "destructive",
-        title: `Failed to ${isEditMode ? 'Update' : 'Create'} Request`,
+        title: "Submission Failed",
         description: error.message || "An unexpected error occurred.",
       });
     } finally {
@@ -208,12 +275,10 @@ export default function CreateDeliveryRequestForm({
     if (!editingRequest) return; // Should not happen if button is shown correctly
     setIsSubmitting(true);
     try {
-      const requestDocRef = doc(db, 'deliveryRequests', editingRequest.requestId);
-      await updateDoc(requestDocRef, {
-        status: 'cancelled',
-        updatedAt: serverTimestamp(),
-        // No notification needed here as per user request to revert that
-      });
+      // TODO: Implement API call to cancel delivery request
+      console.log("Cancelling delivery request:", editingRequest.requestId);
+      // Simulate cancellation
+      // await cancelDeliveryRequest(editingRequest.requestId);
       setIsCancelConfirmationOpen(false);
       // Do not show success toast for cancellation
       if (onSuccess) { 
@@ -259,24 +324,39 @@ export default function CreateDeliveryRequestForm({
                   {filteredCustomers.map(customer => {
                     const isSindhiName = /[ء-ي]/.test(customer.name);
                     const nameClasses = cn("font-medium", isSindhiName ? 'font-sindhi rtl' : 'ltr');
+                    const customerId = customer._id || customer.customerId;
+                    const hasActiveRequest = customersWithActiveRequests.has(customerId || '');
+                    
                     return (
                       <Button
-                        key={customer.customerId}
+                        key={customer._id || customer.customerId}
                         type="button"
                         variant="ghost"
-                        className="w-full justify-start h-auto p-2 text-left"
+                        className={cn(
+                          "w-full justify-start h-auto p-2 text-left relative",
+                          hasActiveRequest ? "opacity-60 cursor-not-allowed" : "hover:bg-accent"
+                        )}
                         onClick={() => handleSelectCustomer(customer)}
-                        disabled={isSubmitting}
+                        disabled={isSubmitting || hasActiveRequest}
                       >
                         <Avatar className="h-8 w-8 mr-3">
-                          <AvatarImage src={customer.profilePictureUrl} alt={customer.name} data-ai-hint="person portrait"/>
                           <AvatarFallback>
                             <UserCircle2 className="h-5 w-5 text-muted-foreground" />
                           </AvatarFallback>
                         </Avatar>
-                        <div>
-                          <p className={nameClasses}>{customer.name}</p>
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between">
+                            <p className={nameClasses}>{customer.name}</p>
+                            {hasActiveRequest && (
+                              <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full ml-2">
+                                Active Order
+                              </span>
+                            )}
+                          </div>
                           <p className="text-xs text-muted-foreground">{customer.address}</p>
+                          {customer.pricePerCan && (
+                            <p className="text-xs text-green-600 font-medium">Rs. {customer.pricePerCan}/can</p>
+                          )}
                         </div>
                       </Button>
                     );
@@ -368,9 +448,9 @@ export default function CreateDeliveryRequestForm({
                     </FormItem>
                     <FormItem className="flex items-center space-x-3 space-y-0">
                       <FormControl>
-                        <RadioGroupItem value="emergency" />
+                        <RadioGroupItem value="urgent" />
                       </FormControl>
-                      <FormLabel className="font-normal">Emergency</FormLabel>
+                      <FormLabel className="font-normal">Urgent</FormLabel>
                     </FormItem>
                   </RadioGroup>
                 </FormControl>

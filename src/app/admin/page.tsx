@@ -1,14 +1,11 @@
 
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Users, ListChecks, Settings, LogOut, UserPlus, Bell, PackageCheck, Pencil, PackageSearch } from 'lucide-react';
-import { auth, db } from '@/lib/firebase';
-import { onAuthStateChanged, signOut as firebaseSignOut, User as FirebaseUser } from 'firebase/auth';
-import { collection, query, onSnapshot, Timestamp, getCountFromServer, orderBy, doc, updateDoc, serverTimestamp, addDoc, getDoc } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import type { Customer, DeliveryRequest, AdminNotification } from '@/types';
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,7 +14,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import CustomerForm from '@/components/forms/CustomerForm';
 import CreateDeliveryRequestForm from '@/components/forms/CreateDeliveryRequestForm';
-import CustomerList from '@/components/admin/CustomerList';
+import CustomerList, { CustomerListRef } from '@/components/admin/CustomerList';
 import DeliveryRequestList from '@/components/admin/DeliveryRequestList';
 import NotificationItem from '@/components/notifications/NotificationItem';
 import { startOfDay, endOfDay, isWithinInterval } from 'date-fns';
@@ -25,8 +22,9 @@ import { startOfDay, endOfDay, isWithinInterval } from 'date-fns';
 export default function AdminDashboardPage() {
   const router = useRouter();
   
-  const [authUser, setAuthUser] = useState<FirebaseUser | null>(null);
+  const [authUser, setAuthUser] = useState<any | null>(null); // Placeholder for auth user
   const [isLoading, setIsLoading] = useState(true); 
+  const [isBackendConnected, setIsBackendConnected] = useState(false);
   
   const [isCustomerFormDialogOpen, setIsCustomerFormDialogOpen] = useState(false);
   const [customerToEdit, setCustomerToEdit] = useState<Customer | null>(null); 
@@ -39,106 +37,116 @@ export default function AdminDashboardPage() {
   const [pendingDeliveries, setPendingDeliveries] = useState(0);
   const [deliveriesTodayCount, setDeliveriesTodayCount] = useState(0);
   const [totalCansToday, setTotalCansToday] = useState(0);
+  const [deliveryRequests, setDeliveryRequests] = useState<DeliveryRequest[]>([]);
 
   const [notifications, setNotifications] = useState<AdminNotification[]>([]);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const [isNotificationPopoverOpen, setIsNotificationPopoverOpen] = useState(false);
 
+  const customerListRef = useRef<CustomerListRef>(null);
+
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        setAuthUser(user);
-        setIsLoading(false);
-      } else {
-        setAuthUser(null);
-        setIsLoading(true); 
-        router.push('/admin/login');
-      }
-    });
-    return () => unsubscribeAuth();
+    // Placeholder for auth state change listener
+    setAuthUser({ uid: 'admin-placeholder', email: 'admin@example.com' });
+    setIsLoading(false);
   }, [router]);
 
   useEffect(() => {
-    if (authUser) { 
-      const customersColRef = collection(db, 'customers');
-      const unsubscribeCustomersCount = onSnapshot(customersColRef, async () => {
+    if (authUser) {
+      // Function to fetch dashboard metrics
+      const fetchDashboardMetrics = async () => {
         try {
-            const snapshot = await getCountFromServer(customersColRef);
-            setTotalCustomers(snapshot.data().count);
-        } catch (error) {
-            console.error("Error fetching customer count:", error);
+          const res = await fetch('http://localhost:4000/api/dashboard/metrics');
+          if (!res.ok) {
+            throw new Error(`HTTP error! status: ${res.status}`);
+          }
+          const data = await res.json();
+          setTotalCustomers(data.totalCustomers || 0);
+          setPendingDeliveries(data.pendingRequests || 0);
+          setDeliveriesTodayCount(data.deliveriesToday || 0);
+          setTotalCansToday(data.totalCansToday || 0);
+        } catch (err) {
+          console.error('Error fetching dashboard metrics:', err);
+          setTotalCustomers(0);
+          setPendingDeliveries(0);
+          setDeliveriesTodayCount(0);
+          setTotalCansToday(0);
         }
-      });
-    
-      const deliveryRequestsColRef = collection(db, 'deliveryRequests');
-      const qDeliveries = query(deliveryRequestsColRef); 
-      const unsubscribeDeliveries = onSnapshot(qDeliveries, (snapshot) => {
-          let pendingCount = 0;
-          let todayDeliveryCount = 0;
-          let cansTodaySum = 0;
-          const todayStart = startOfDay(new Date());
-          const todayEnd = endOfDay(new Date());
+      };
 
-          snapshot.forEach(doc => {
-              const request = doc.data() as DeliveryRequest;
-              if (request.status === 'pending' || request.status === 'pending_confirmation') {
-                  pendingCount++;
-              }
-              if (request.status === 'delivered' && request.deliveredAt) {
-                  const deliveredDate = (request.deliveredAt as Timestamp).toDate();
-                  if (isWithinInterval(deliveredDate, { start: todayStart, end: todayEnd })) {
-                      todayDeliveryCount++;
-                      cansTodaySum += request.cans || 0;
-                  }
-              }
-          });
-          setPendingDeliveries(pendingCount);
-          setDeliveriesTodayCount(todayDeliveryCount);
-          setTotalCansToday(cansTodaySum);
-      });
+      // Function to fetch delivery requests
+      const fetchDeliveryRequests = async () => {
+        try {
+          const res = await fetch('http://localhost:4000/api/delivery-requests');
+          if (!res.ok) {
+            throw new Error(`HTTP error! status: ${res.status}`);
+          }
+          const data = await res.json();
+          setDeliveryRequests(data || []);
+        } catch (err) {
+          console.error('Error fetching delivery requests:', err);
+          setDeliveryRequests([]);
+        }
+      };
 
-      const notificationsQuery = query(collection(db, 'adminNotifications'), orderBy('timestamp', 'desc'));
-      const unsubscribeNotifications = onSnapshot(notificationsQuery, (snapshot) => {
-          const fetchedNotifications: AdminNotification[] = [];
-          let unreadCount = 0;
-          snapshot.forEach(doc => {
-              const data = doc.data();
-              const notification = {
-                  notificationId: doc.id,
-                  ...data,
-                  timestamp: data.timestamp instanceof Timestamp ? data.timestamp.toDate() : new Date(data.timestamp),
-              } as AdminNotification;
-              fetchedNotifications.push(notification);
-              if (!notification.isRead) {
-                  unreadCount++;
-              }
-          });
-          setNotifications(fetchedNotifications);
-          setUnreadNotificationCount(unreadCount);
-      });
-      
+      // Initial fetch
+      fetchDashboardMetrics();
+      fetchDeliveryRequests();
+
+      // Set up real-time updates every 5 seconds
+      const metricsInterval = setInterval(fetchDashboardMetrics, 5000);
+      const requestsInterval = setInterval(fetchDeliveryRequests, 3000);
+
+      setNotifications([]);
+      setUnreadNotificationCount(0);
+
+      // Cleanup intervals on unmount
       return () => {
-          unsubscribeCustomersCount();
-          unsubscribeDeliveries();
-          unsubscribeNotifications();
+        clearInterval(metricsInterval);
+        clearInterval(requestsInterval);
       };
     } else {
       setTotalCustomers(0);
       setPendingDeliveries(0);
       setDeliveriesTodayCount(0);
       setTotalCansToday(0);
+      setDeliveryRequests([]);
       setNotifications([]);
       setUnreadNotificationCount(0);
     }
   }, [authUser]); 
 
+  useEffect(() => {
+    // Check backend connection
+    const checkBackendConnection = async () => {
+      try {
+        const response = await fetch('http://localhost:4000/api/health', {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' },
+          // Add a timeout to prevent hanging
+          signal: AbortSignal.timeout(5000)
+        });
+        setIsBackendConnected(response.ok);
+        
+        if (!response.ok) {
+          console.warn('Backend health check failed:', response.status);
+        }
+      } catch (err) {
+        console.error('Backend connection error:', err);
+        setIsBackendConnected(false);
+      }
+    };
+
+    checkBackendConnection();
+    // Check connection every 10 seconds instead of 30 for faster detection
+    const interval = setInterval(checkBackendConnection, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
 
   const handleSignOut = async () => {
-    try {
-      await firebaseSignOut(auth);
-    } catch (error) {
-      console.error("Sign out error:", error);
-    }
+    // Placeholder for sign out
+    alert('Sign out functionality not yet implemented.');
   };
 
   const openRequestDialog = (requestToEdit?: DeliveryRequest, customerToPreselect?: Customer) => {
@@ -174,6 +182,22 @@ export default function AdminDashboardPage() {
     setCustomerToEdit(null);
     setIsCustomerFormDialogOpen(true);
   }
+
+  const handleInitiateNewRequest = (customer: Customer) => {
+    openRequestDialog(undefined, customer);
+  };
+
+  const handleEditRequest = (request: DeliveryRequest) => {
+    openRequestDialog(request);
+  };
+
+  const handleCustomerFormSuccess = () => {
+    setIsCustomerFormDialogOpen(false);
+    // Refresh the customer list after successful add/edit
+    if (customerListRef.current) {
+      customerListRef.current.refreshCustomers();
+    }
+  };
 
 
   if (isLoading) { 
@@ -243,6 +267,29 @@ export default function AdminDashboardPage() {
       </div>
       
       <main className="flex-grow container mx-auto p-4 md:p-8">
+        {!isBackendConnected && (
+          <div className="mb-4 p-4 bg-yellow-100 border border-yellow-400 text-yellow-700 rounded-md">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">⚠️ Backend server is not connected</p>
+                <p className="text-xs mt-1">
+                  Make sure the backend is running on port 4000. 
+                  <a href="http://localhost:4000/api/health" target="_blank" rel="noopener noreferrer" className="underline ml-1">
+                    Test backend health
+                  </a>
+                </p>
+              </div>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => window.location.reload()}
+                className="ml-4 text-yellow-700 border-yellow-400 hover:bg-yellow-200"
+              >
+                Retry Connection
+              </Button>
+            </div>
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
           <Card className="glass-card">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-sm font-medium">Total Customers</CardTitle><Users className="h-5 w-5 text-muted-foreground" /></CardHeader>
@@ -272,8 +319,10 @@ export default function AdminDashboardPage() {
               </CardHeader>
               <CardContent className="p-6">
                  <DeliveryRequestList 
-                    onInitiateNewRequest={(customer) => openRequestDialog(undefined, customer)}
-                    onEditRequest={(request) => openRequestDialog(request)}
+                    onInitiateNewRequest={handleInitiateNewRequest}
+                    onEditRequest={handleEditRequest}
+                    deliveryRequests={deliveryRequests}
+                    setDeliveryRequests={setDeliveryRequests}
                  />
               </CardContent>
             </Card>
@@ -296,7 +345,7 @@ export default function AdminDashboardPage() {
                     <CardDescription>View, search, and manage customer profiles.</CardDescription>
                   </CardHeader>
                   <CardContent className="p-6">
-                    <CustomerList onEditCustomer={handleEditCustomer} />
+                    <CustomerList ref={customerListRef} onEditCustomer={handleEditCustomer} />
                   </CardContent>
                 </Card>
               </AccordionContent>
@@ -315,7 +364,7 @@ export default function AdminDashboardPage() {
                     <div className="flex-grow overflow-y-auto pr-2 py-2">
                         <CustomerForm 
                             editingCustomer={customerToEdit}
-                            onSuccess={() => setIsCustomerFormDialogOpen(false)} 
+                            onSuccess={handleCustomerFormSuccess} 
                         />
                     </div>
                 </DialogContent>
