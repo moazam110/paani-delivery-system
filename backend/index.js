@@ -501,4 +501,8 @@ app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/api/health`);
   console.log(`Test customer: http://localhost:${PORT}/api/test-customer`);
+<<<<<<< HEAD
 }); 
+=======
+}); 
+>>>>>>> 750ab0b (Upload backend project with resolve ssl = ture)
